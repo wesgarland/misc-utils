@@ -1,0 +1,128 @@
+#! /bin/bash
+#
+# @file         git-mv
+#               Move files and/or directories from one git repository to another, preserving history.
+#               Based on ideas in https://gist.githubusercontent.com/tsayen/f1c1c4d62d4fda77abf1586bd39f9b74/raw/14adc4eb001be79c58680853226144f894815ba7/git-move.sh
+#
+#               Note: diff.context cannot be set to 0 in ~/.gitconfig or this script will fail
+#
+# @author       Wes Garland, wes@kingsds.network
+# @date         March 2021
+#
+
+[ ! "$2" -o "$1" = "-h" ] && cat <<EOF && exit 1
+Usage: $0 [--dry-run] path/to/file/or/dir [path/to/file/or/dir ...] path/to/destination/repo
+EOF
+runDir=`pwd`
+
+EXIT_CODE=0
+if [ "$1" = "--dry-run" ]; then
+  DRY_RUN=1
+  shift
+fi
+
+# Sort out target repo
+destFull="`realpath ${@: -1}`"
+if [ ! -d "$destFull" ]; then
+  echo "${@: -1} is not a directory"
+  exit 1
+fi
+cd "$destFull" && destRepo=`git rev-parse --show-toplevel`
+if [ ! -f "$destRepo/.git/HEAD" ]; then
+  echo "Error: could not determine git repository for '$destFull'; exit" >&2
+  exit 1
+fi
+
+# Check that everything exists
+cd "$runDir"
+for check in $*
+do
+  if [ ! -e "$check" ]; then
+    echo "Could not locate '$check'"
+    exit 1
+  fi
+done
+
+cd "$runDir" && srcRepo=`git rev-parse --show-toplevel`
+if [ ! "$srcRepo" ] || [ ! -f "$srcRepo/.git/HEAD" ]; then
+  echo "Could not locate git repository for $runDir" >&2
+  exit 2
+fi
+
+# Validate source files|dirs in argv
+(
+  while [ "$2" ];
+  do
+    cd "$runDir"
+    srcFull=`realpath "$1"`
+    cd `dirname "$srcFull"` && src=`realpath --relative-to="$srcRepo" "$srcFull"`
+    shift
+    if [ ! "$src" ] || [ ! -e "$srcRepo/$src" ]; then
+        echo "Error: could not locate $srcFull in $srcRepo ($src); skipping" >&2
+        EXIT_CODE=2      
+    fi
+  done
+)
+
+# Emit the list of path specs in argv
+emitPaths()
+{
+  while [ "$2" ];
+  do
+    cd "$runDir"
+    srcFull=`realpath "$1"`
+    cd `dirname "$srcFull"` && src=`realpath --relative-to="$srcRepo" "$srcFull"`
+    shift
+    if [ ! "$src" ] || [ ! -e "$srcRepo/$src" ]; then
+      continue
+    fi
+    echo "$src"
+  done
+}
+
+# Emit the list of files in argv
+emitFlist()
+{
+  emitPaths $@ \
+  | while read file;
+    do
+      git ls-files --error-unmatch "$file" 2>/dev/null
+    done
+}
+
+if [ "$GIT_RELOCATE_DEBUG_PATCH" ]; then
+  patchFile="_patch_"
+else
+  patchFile="_git_relocate_$$.patch"
+  trap "rm \"${destRepo}/${patchFile}\" 2>/dev/null" EXIT
+fi
+
+cd "$srcRepo"
+echo "creating patch for ${srcRepo} -> ${destRepo}"
+emitFlist $@ | sed 's/^/ - /'
+[ ! "$GIT_RELOCATE_NO_FOLLOW" ] && [ -f "$src" ] && [ ! "$3" ] && follow="--follow"
+
+git log --name-only --pretty="format:" --follow `emitPaths $@` \
+| sort -u \
+| xargs git log $follow --pretty=email --patch-with-stat --reverse --full-index --binary -m --first-parent -- \
+> "${destRepo}/${patchFile}"
+
+if [ "$?" != "0" ]; then
+  echo "Error: could not generate patch"
+  exit 2
+fi
+
+[ "$DRY_RUN" ] && exit $EXIT_CODE
+
+cd "${destRepo}" && git am --committer-date-is-author-date --whitespace=nowarn < ${patchFile}
+
+if [ "$?" != "0" ]; then
+  echo "Error applying patch for `emitPaths $@` in ${destRepo}; exit"
+  cd "${destRepo}" && git am --abort
+  exit 3
+fi
+
+cd "$srcRepo"
+git rm -r `emitPaths $@`
+
+exit $EXIT_CODE

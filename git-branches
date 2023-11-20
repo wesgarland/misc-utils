@@ -1,0 +1,13 @@
+#! /bin/bash
+
+[ "$COUNT" ] || COUNT=15
+
+git for-each-ref --sort=-committerdate:iso8601 --format='%(committerdate:iso8601)%09%(authorname)%09%(refname)' \
+| grep -v refs/tags \
+| grep -v remote \
+| head -$COUNT \
+| sed \
+    -e 's/	refs\/heads\/*/	/' \
+    -e 's/\(	\)\([^	]*\)\(	\)/\1\2                    \3/' \
+| sed -r \
+    -e 's/(	)([^	]{0,20})( *)/\1\2/'

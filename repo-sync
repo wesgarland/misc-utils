@@ -1,0 +1,47 @@
+#! /bin/bash
+#
+# @file		repo-sync
+#		Synchronize two git repos, leaving merge-conflict markers in place
+#		if that happens.
+# @author	Wes Garland, wes@kingsds.network
+# @date		May 2022
+
+repo1="$1"
+repo2="$2"
+branch="$3"
+
+[ -d ~/.repo-sync ] || mkdir ~/.repo-sync
+cd ~/.repo-sync || exit 1
+
+repoBase="`basename \"$repo1\" | sed 's/\.git$//'`"
+[ -d "$repoBase" ] || git clone "$repo1"
+cd "$repoBase" || exit 1
+
+panic()
+{
+  echo "PANIC $*" >&2
+  exit 1
+}
+
+forceMerge()
+{
+  git diff --name-only --diff-filter=U | while read file
+  do
+    echo "conflict: $file"
+    git add "$file"
+  done
+  git commit -am "auto merge on `hostname` via $0" 2>&1 >/dev/null
+}
+
+[ "$branch" ] || branch=main
+
+export GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+
+git checkout "$branch" 2>&1 >/dev/null || panic "can't checkout ${branch}"
+git pull 2>&1 >/dev/null || panic
+forceMerge
+git pull "$repo2" 2>&1 >/dev/null || panic "can't pull $repo2"
+forceMerge
+git push >/dev/null 2>&1 || panic
+git push "$repo2" 2>&1 >/dev/null || panic "can't push $repo2"
+

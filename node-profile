@@ -1,0 +1,18 @@
+#! /bin/bash
+#
+# @file		node-profile
+# @author       Wes Garland, wes@distributive.network
+# @date         March 2023
+#
+# Usage: exact same as node. When you're done, it displays a profile summary. Temp files are
+#        moved to /tmp/node-profiles, so the profile can be reanalyzed by different tools.
+#
+mkdir -p /tmp/node-profiles
+node --prof "$@"
+outfile=`ls -rt isolate-0x*-v8.log | tail -1`
+mv "$outfile" /tmp/node-profiles
+txtfile=`echo "/tmp/node-profiles/$outfile" | sed 's/\.log$/.txt/'`
+(
+  echo "--- ${txtfile}: --------------------"
+  node --prof-process "/tmp/node-profiles/$outfile"
+) | tee "$txtfile" | less

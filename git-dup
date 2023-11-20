@@ -1,0 +1,26 @@
+#! /bin/bash -ex
+# Based on https://stackoverflow.com/questions/1043388/record-file-copy-operation-with-git/46484848#46484848
+
+if [ ! "$2" ]; then
+  echo "git-dup: copies a file within git, preserving history"
+  echo "usage: $0 <src> <dest>"
+  exit 1
+fi
+
+orig="$1"
+apple="$2"
+[ ! -f "$orig" ] && echo "$orig: file not found" && exit 2
+[ -f "$apple" ] && echo "$apple: file exists" && exit 3
+
+git branch -D utility/git-dup 2>/dev/null || true
+git checkout -b utility/git-dup # create and switch to branch
+
+git mv "$orig" "$apple" # make the duplicate
+git commit -m "[git-dup] duplicate $orig to $apple"
+
+git checkout HEAD~ "$orig" # bring back the original
+git commit -m "[git-dup] restore $orig"
+
+git checkout - # switch back to source branch
+git merge --no-ff utility/git-dup -m "Create $apple as copy of $orig"  # merge dup into source branch
+git branch -D utility/git-dup
